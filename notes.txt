@@ -1,0 +1,104 @@
+more diluted (no acid rain)
+saltier from salt
+fracking brines (mining salts)
+high nitrogen even as p decreases
+hydrologic regimes
+oxygen changing with climate
+diversity and concentration of contaminants
+biogeochemical regimes
+chemical input changes, warming changes, interactions between the two
+
+camels/camels-chem+ms big ordination
+	10 vars most commonly shared
+	saltier, hotter, focus on these simplifications
+
+10 year threshold
+
+salinity or conductivity
+nitrate or ammonium or P or pH, sulfate
+Cl, Ca, Mg, K
+	for the salty streams, what are their salts?
+PCA of top quartile of salty streams
+	
+
+increasing, decreasing, not changing?
+
+for ms sites with no human influence, how many showing changes?
+
+hydro regime interaction with biogeo regimes (extreme flows can result in rapid flushing. low flow can exacerbate problematic redox-sensitive chemicals of concern)
+	different river systems could be headed in different directions
+
+make this point here?
+	rivers can't get much warmer, they just start evaporating
+	so instead chemical change
+	wes made a poster on this with audrey and spencer
+
+--------
+
+REFINE 1
+
+plots:
+fresher vs saltier (conductivity trends)
+saltier how? (pca of saltiest sites)
+fingerprint of coal: sulfate trends (less acid rain vs more coal mining or fly ash)
+temp trends
+backburner:
+	o2 trends? or instead mean annual temp and o2, or annual peaks and minima, (consult joanna's grdo stuff)
+		case is as rivers get warmer, o2 changes
+sulfate trends
+phosphate? with ortho-p?
+nitrate
+cl
+pca of sulfateist
+	start and endpoint in color (dif color)
+	but for sulfate, don't need this change over time thing
+	for sites increasing in salinity, show their change over time though
+biplot of molar PO4 vs NO3 changing over time, with traces
+	for NO3, actually use NH4 and NO2 as well? see what we have and where we can get them all
+	higher N:P over time
+some weird-ass thing of my own design
+	put one crazy idea in emily's manuscript	
+
+do mean annual vwc
+10 years to enter
+	over 15 years? over 20?
+
+
+------
+
+REFINE 2
+
+prep
+	include camels chem
+X		do mean annual vwc
+X		10 years to enter
+X			over 15 years? over 20?
+
+trend plots
+	VWC
+		fingerprint of coal: sulfate trends (less acid rain vs more coal mining or fly ash)
+		phosphate? with ortho-p?
+		nitrate
+		cl
+	NOT VWC
+		fresher vs saltier (conductivity trends)
+		temp trends
+
+ordinations
+	saltier how? (pca of saltiest sites)
+	pca of sulfateist
+		start and endpoint in color (dif color)
+		but for sulfate, don't need this change over time thing
+		for sites increasing in salinity, show their change over time though
+
+biplots
+	biplot of molar PO4 vs NO3 changing over time, with traces
+		for NO3, actually use NH4 and NO2 as well? see what we have and where we can get them all
+		higher N:P over time?
+
+backburner
+	o2 trends? or instead mean annual temp and o2, or annual peaks and minima, (consult joanna's grdo stuff)
+		case is as rivers get warmer, o2 changes
+	some weird-ass thing of my own design
+		put one crazy idea in emily's manuscript	
+

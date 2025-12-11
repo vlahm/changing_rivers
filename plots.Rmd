@@ -1,0 +1,346 @@
+---
+title: 'Changing Rivers MS'
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(macrosheds)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(ggthemes)
+library(trend) #for Sen's slope
+library(plotly)
+```
+
+```{r config, include = FALSE}
+
+# dmns <- c('hbef', 'fernow')
+vwc_vars <- c('pH', 'NO3_N', 'SO4_S', 'Na', 'K', 'Ca', 'Mg', 'SiO2_Si', 'DOC',
+              # 'Chla', 'Chl', 'Mn', 'Fe',
+              'DIC', 'NH4_N', 'SiO2_S', 'PO4', 'orthophosphate_P',
+              'TSS', 'TP', 'TN', 'F')
+non_vwc_vars <- c('spCond', 'temp')
+salt_vars <- c('Ca', 'Mg', 'Na', 'K', 'SO4_S', 'NO3_N', 'NH4_N', 'Cl', 'F', 'alk')
+# chuck_sites <- c('QT', 'QS', 'Q3')
+chuck_sites <- c()
+
+ms_root <- '~/git/macrosheds/macrosheds_dataset/'
+```
+
+```{r helpers, include = FALSE}
+
+has_xiny <- function(wy, x, y) {
+  #x wateryears represented over a y year span
+  wy <- sort(unique(wy))
+  n  <- length(wy)
+  if (n < x) return(FALSE)
+
+  for (i in seq_len(n)) {
+    if (sum(wy >= wy[i] & wy <= wy[i] + (y - 1)) >= x)
+      return(TRUE)
+  }
+  FALSE
+}
+```
+
+```{r load, include = FALSE}
+
+# ms_download_core_data(ms_root, domains = 'all')
+
+sites <- ms_load_sites()
+conc <- ms_load_product(ms_root, 'stream_chemistry', warn = FALSE)
+# pconc <- ms_load_product(ms_root, 'precip_chemistry')
+q <- ms_load_product(ms_root, 'discharge', warn = FALSE)
+# p <- ms_load_product(ms_root, 'precipitation')
+```
+
+```{r prep, include = FALSE}
+
+vwc_s <- conc %>%
+  filter(var %in% vwc_vars) %>% 
+  mutate(val = if_else(var == 'pH', 10^(-val), val)) %>%
+  left_join(select(sites, domain, site_code), by = 'site_code') %>%
+  select(domain, site_code, date, var, val) %>%
+  left_join(
+    select(q, date, site_code, q = val),
+    by = c('date', 'site_code')
+  ) %>%
+  filter(!is.na(val), !is.na(q)) %>%
+  mutate(
+    wy = if_else(month(date) >= 10, year(date) + 1, year(date)),
+    q = q * 86400 #L
+  ) %>%
+  group_by(domain, site_code, wy, var) %>%
+  summarize(vwc = sum(val * q) / sum(q), .groups = 'drop') %>%
+  mutate(
+    vwc = if_else(var == 'pH', -log10(pmax(vwc, .Machine$double.xmin)), vwc)
+  ) %>%
+  filter(! site_code %in% chuck_sites) %>% 
+  group_by(site_code, var) %>% 
+  filter(has_xiny(wy, 10, 15)) %>% 
+  ungroup() %>% 
+  filter(! is.na(vwc))
+
+d_s <- conc %>%
+  filter(var %in% non_vwc_vars) %>% 
+  left_join(select(sites, domain, site_code), by = 'site_code') %>%
+  select(domain, site_code, date, var, val) %>%
+  filter(!is.na(val)) %>%
+  mutate(
+    wy = if_else(month(date) >= 10, year(date) + 1, year(date)),
+  ) %>%
+  group_by(domain, site_code, wy, var) %>%
+  summarize(val = mean(val, na.rm = TRUE),
+            .groups = 'drop') %>% 
+  filter(! site_code %in% chuck_sites) %>% 
+  group_by(site_code, var) %>% 
+  filter(has_xiny(wy, 10, 15)) %>% 
+  ungroup()
+
+# q_conform <- q %>%
+#   mutate(wy = if_else(month(date) >= 10, year(date) + 1, year(date))) %>%
+#   left_join(select(sites, domain, site_code, ws_area_ha), by = 'site_code') %>%
+#   filter(! is.na(val)) %>%
+#   mutate(val = val * 86400 / ws_area_ha / 10000) %>%
+#   group_by(domain, site_code, wy) %>%
+#   summarize(val = sum(val, na.rm = TRUE), .groups = 'drop') %>%
+#   mutate(var = 'hyd_flux_mm') %>%
+#   select(domain, site_code, wy, var, vwc = val)
+
+# vwc_s <- bind_rows(vwc_s, q_conform)
+```
+
+```{r Sen slope, include = FALSE}
+
+vwc_trend <- vwc_s %>%
+  group_by(domain, site_code, var) %>%
+  arrange(wy) %>% 
+  summarize(
+    sen_fit = list(sens.slope(vwc)),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    sen_slope = map_dbl(sen_fit, ~ .x$estimates[["Sen's slope"]]),
+    p_value = map_dbl(sen_fit, ~ .x$p.value)
+  ) %>%
+  select(-sen_fit)
+
+vwc_trend <- vwc_trend %>%
+  mutate(
+    sig = !is.na(p_value) & p_value < 0.05,
+    trend_cat = case_when(
+      !sig ~ 'nonsig',
+      sen_slope > 0 ~ 'pos',
+      sen_slope < 0 ~ 'neg',
+      TRUE ~ 'nonsig' #such thing as 0 slope and sig?
+    )
+  )
+
+vwc_plot <- vwc_s %>%
+  left_join(vwc_trend, by = c('domain', 'site_code', 'var'))
+
+
+d_trend <- d_s %>%
+  group_by(domain, site_code, var) %>%
+  arrange(wy) %>% 
+  summarize(
+    sen_fit = list(sens.slope(val)),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    sen_slope = map_dbl(sen_fit, ~ .x$estimates[["Sen's slope"]]),
+    p_value = map_dbl(sen_fit, ~ .x$p.value)
+  ) %>%
+  select(-sen_fit)
+
+d_trend <- d_trend %>%
+  mutate(
+    sig = !is.na(p_value) & p_value < 0.05,
+    trend_cat = case_when(
+      !sig ~ 'nonsig',
+      sen_slope > 0 ~ 'pos',
+      sen_slope < 0 ~ 'neg',
+      TRUE ~ 'nonsig' #such thing as 0 slope and sig?
+    )
+  )
+
+d_plot <- d_s %>%
+  left_join(d_trend, by = c('domain', 'site_code', 'var'))
+```
+
+```{r all var triends (faceted), echo = FALSE, fig.width = 16}
+p <- vwc_plot %>% 
+  ggplot(aes(x = wy, y = vwc, group = site_code, color = trend_cat,
+             text = paste(
+               "Domain:", domain,
+               "<br>Site:", site_code,
+               "<br>Var:", var,
+               "<br>WY:", wy,
+               "<br>WVC:", signif(vwc, 3),
+               "<br>Sen slope:", signif(sen_slope, 3),
+               "<br>p:", signif(p_value, 3)
+             ))) +
+  geom_line(aes(alpha = 0.3)) +
+  scale_color_manual(
+    values = c(
+      pos    = 'firebrick3',
+      neg    = 'dodgerblue3',
+      nonsig = 'gray50'
+      # flat   = 'gray50'
+    ),
+    # na.value = 'gray80'
+  ) +
+  scale_alpha_identity() +
+  facet_wrap(~ var, scales = 'free_y') +
+  labs(
+    x = 'Water year',
+    y = 'Volume-weighted concentration (mg/L)',
+    color = 'Trend',
+    title = 'VWC'
+  ) +
+  theme_few()
+
+ggplotly(p, tooltip = 'text')
+
+
+p2 <- d_plot %>% 
+  ggplot(aes(x = wy, y = val, group = site_code, color = trend_cat,
+             text = paste(
+               "Domain:", domain,
+               "<br>Site:", site_code,
+               "<br>Var:", var,
+               "<br>WY:", wy,
+               "<br>Val:", signif(val, 3),
+               "<br>Sen slope:", signif(sen_slope, 3),
+               "<br>p:", signif(p_value, 3)
+             ))) +
+  geom_line(aes(alpha = 0.3)) +
+  scale_color_manual(
+    values = c(
+      pos    = 'firebrick3',
+      neg    = 'dodgerblue3',
+      nonsig = 'gray50'
+      # flat   = 'gray50'
+    ),
+    # na.value = 'gray80'
+  ) +
+  scale_alpha_identity() +
+  facet_wrap(~ var, scales = 'free_y') +
+  labs(
+    x = 'Water year',
+    y = 'various',
+    color = 'Trend',
+    title = 'Other'
+  ) +
+  theme_few()
+
+ggplotly(p2, tooltip = 'text')
+
+```
+
+<details>
+  <summary>Each variable plotted separately</summary>
+  
+```{r all var trends (series), echo = FALSE, fig.width = 12}
+
+plots_by_var <- vwc_plot %>% 
+  group_split(var) %>% 
+  # name the list by var values
+  set_names(map_chr(., ~ unique(.x$var))) %>% 
+  imap(function(df_var, var_name) {
+    ggplot(
+      df_var,
+      aes(
+        x = wy,
+        y = vwc,
+        group = site_code,
+        color = trend_cat,
+        text = paste(
+          'Domain:', domain,
+          '<br>Site:', site_code,
+          '<br>Var:', var,
+          '<br>WY:', wy,
+          '<br>WVC:', signif(vwc, 3),
+          '<br>Sen slope:', signif(sen_slope, 3),
+          '<br>p:', signif(p_value, 3)
+        )
+      )
+    ) +
+      geom_line(aes(alpha = 0.3)) +
+      scale_color_manual(
+        values = c(
+          pos    = 'firebrick3',
+          neg    = 'dodgerblue3',
+          nonsig = 'gray50'
+        )
+      ) +
+      scale_alpha_identity() +
+      labs(
+        title = var_name,
+        x = 'Water year',
+        y = 'Volume-weighted concentration (mg/L)',
+        color = 'Trend'
+      ) +
+      theme_few()
+  })
+
+
+plots_by_var2 <- d_plot %>% 
+  group_split(var) %>% 
+  set_names(map_chr(., ~ unique(.x$var))) %>% 
+  imap(function(df_var, var_name) {
+    ggplot(
+      df_var,
+      aes(
+        x = wy,
+        y = val,
+        group = site_code,
+        color = trend_cat,
+        text = paste(
+          'Domain:', domain,
+          '<br>Site:', site_code,
+          '<br>Var:', var,
+          '<br>WY:', wy,
+          '<br>Val:', signif(val, 3),
+          '<br>Sen slope:', signif(sen_slope, 3),
+          '<br>p:', signif(p_value, 3)
+        )
+      )
+    ) +
+      geom_line(aes(alpha = 0.3)) +
+      scale_color_manual(
+        values = c(
+          pos    = 'firebrick3',
+          neg    = 'dodgerblue3',
+          nonsig = 'gray50'
+        )
+      ) +
+      scale_alpha_identity() +
+      labs(
+        title = var_name,
+        x = 'Water year',
+        y = 'various',
+        color = 'Trend'
+      ) +
+      theme_few()
+  })
+
+plotlys_by_var <- map(plots_by_var, ggplotly, tooltip = 'text')
+plotlys_by_var2 <- map(plots_by_var2, ggplotly, tooltip = 'text')
+
+htmltools::browsable(
+  htmltools::tagList(lapply(plotlys_by_var, \(p) p))
+)
+htmltools::browsable(
+  htmltools::tagList(lapply(plotlys_by_var2, \(p) p))
+)
+```
+</details> 
+
+```{r sulfate PCA}
+vwc_s %>%
+  filter(var %in% salt_vars)
+```
