@@ -24,6 +24,7 @@ vwc_vars <- c('pH', 'NO3_N', 'SO4_S', 'Na', 'K', 'Ca', 'Mg', 'SiO2_Si', 'DOC',
               'TSS', 'TP', 'TN', 'F')
 non_vwc_vars <- c('spCond', 'temp')
 salt_vars <- c('Ca', 'Mg', 'Na', 'K', 'SO4_S', 'NO3_N', 'NH4_N', 'Cl', 'F', 'alk')
+np_vars <- c('NO3_N', 'PO4_P')
 # chuck_sites <- c('QT', 'QS', 'Q3')
 chuck_sites <- c()
 
@@ -85,7 +86,7 @@ vwc_s <- conc %>%
   filter(! is.na(vwc))
 
 d_s <- conc %>%
-  filter(var %in% non_vwc_vars) %>% 
+  # filter(var %in% non_vwc_vars) %>% 
   left_join(select(sites, domain, site_code), by = 'site_code') %>%
   select(domain, site_code, date, var, val) %>%
   filter(!is.na(val)) %>%
@@ -144,6 +145,7 @@ vwc_plot <- vwc_s %>%
 
 
 d_trend <- d_s %>%
+  filter(var %in% non_vwc_vars) %>% 
   group_by(domain, site_code, var) %>%
   arrange(wy) %>% 
   summarize(
@@ -168,8 +170,10 @@ d_trend <- d_trend %>%
   )
 
 d_plot <- d_s %>%
-  left_join(d_trend, by = c('domain', 'site_code', 'var'))
+  right_join(d_trend, by = c('domain', 'site_code', 'var'))
 ```
+
+### Temporal trends 
 
 ```{r all var triends (faceted), echo = FALSE, fig.width = 16}
 p <- vwc_plot %>% 
@@ -340,7 +344,107 @@ htmltools::browsable(
 ```
 </details> 
 
+### Changing N:P
+
+```{r biplots, echo = FALSE, fig.width = 12}
+x_vals <- 10^seq(-13, -1)
+d_s %>% 
+  filter(var %in% np_vars) %>% 
+  macrosheds::ms_conversions(convert_units_from = 'mg/L', convert_units_to = 'mol/L') %>% 
+  mutate(val = log(val)) %>% 
+  pivot_wider(names_from = 'var', values_from = 'val') %>% 
+  drop_na(NO3_N, PO4_P) %>% 
+  # filter(site_code == 'BARN') %>%
+  # filter(domain == 'hbef') %>%
+  group_by(site_code) %>%
+  arrange(wy, .by_group = TRUE) %>%
+  mutate(
+    ord      = row_number(),
+    n        = n(),
+    is_first = ord == 1,
+    is_last  = ord == n(),
+    pos01    = if_else(n > 1, (ord - 1) / (n - 1), 0)  # 0 = first, 1 = last
+  ) %>%
+  ungroup() %>%
+  ggplot(aes(NO3_N, PO4_P, group = site_code)) +
+  facet_wrap(~domain, scales = 'free') +
+  # facet_wrap(~domain) +
+  # geom_point(
+  #   data = ~ filter(.x, !(is_first | is_last)),
+  #   color = "gray50",
+  #   alpha = 0.3
+  # ) +
+  geom_point(
+    data = ~ filter(.x, is_first),
+    color = "red",
+    alpha = 0.6
+  ) +
+  geom_point(
+    data = ~ filter(.x, is_last),
+    color = "black",
+    alpha = 0.6
+  ) +
+  geom_path(aes(color = pos01), alpha = 0.6) +
+  scale_color_gradient(low = "red", high = "black", limits = c(0, 1), guide = "none") +
+  theme_few() +
+  xlab('NO3-N (M)') +
+  ylab('PO4-P (M)') +
+  # scale_x_continuous(labels = ~ signif(exp(.x), 3)) +
+  # scale_y_continuous(labels = ~ signif(exp(.x), 3))
+  scale_x_continuous(
+    breaks = log(x_vals),
+    labels = scales::label_parse()(paste0("10^", seq(-13, -1)))
+  ) +
+  scale_y_continuous(
+    breaks = log(x_vals),
+    labels = scales::label_parse()(paste0("10^", seq(-13, -1)))
+  ) +
+  scale_color_gradient(
+    low   = "red",
+    high  = "black",
+    limits = c(0, 1),
+    breaks = c(0, 1),
+    labels = c("start", "end"),
+    name   = NULL
+  )
+
+d_ratio <- d_s %>% 
+  filter(var %in% np_vars) %>% 
+  macrosheds::ms_conversions(convert_units_from = 'mg/L', convert_units_to = 'mol/L') %>% 
+  pivot_wider(names_from = 'var', values_from = 'val') %>% 
+  drop_na(NO3_N, PO4_P) %>% 
+  mutate(np = NO3_N / PO4_P)
+
+ggplot(d_ratio, aes(wy, np, group = site_code)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_line(alpha = 0.2) +
+  stat_summary(aes(group = domain, color = domain),
+               fun = median, geom = "line", size = 1.1) +
+  facet_wrap(~domain, scales = "free_y") +
+  ylab('N:P') +
+  xlab('Water year') +
+  theme(legend.position = 'none')
+
+d_ratio <- d_s %>% 
+  filter(var %in% np_vars) %>% 
+  macrosheds::ms_conversions(convert_units_from = 'mg/L', convert_units_to = 'mol/L') %>% 
+  pivot_wider(names_from = 'var', values_from = 'val') %>% 
+  drop_na(NO3_N, PO4_P) %>% 
+  mutate(ln_np = log(NO3_N / PO4_P))
+
+ggplot(d_ratio, aes(wy, ln_np, group = site_code)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_line(alpha = 0.2) +
+  stat_summary(aes(group = domain, color = domain),
+               fun = median, geom = "line", size = 1.1) +
+  facet_wrap(~domain, scales = "free_y") +
+  ylab('log N:P') +
+  xlab('Water year') +
+  theme(legend.position = 'none')
+```
+
 ```{r sulfate PCA}
 vwc_s %>%
-  filter(var %in% salt_vars)
+  filter(var %in% salt_vars) %>% 
+  
 ```
