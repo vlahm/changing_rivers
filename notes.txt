@@ -70,6 +70,9 @@ REFINE 2
 
 prep
 	include camels chem
+X		updated_ts?
+X		no3 or total_no3? same for so4, cl
+X		which Q?
 X		do mean annual vwc
 X		10 years to enter
 X			over 15 years? over 20?
@@ -101,4 +104,17 @@ backburner
 		case is as rivers get warmer, o2 changes
 	some weird-ass thing of my own design
 		put one crazy idea in emily's manuscript	
+
+
+------------------
+
+mention:
+	determined "saltiest" by sum of salt vars
+		ca, mg, k, na; cl no3, so4; (NH4)
+		in mg/L vwc. could also do by spcond, or molar 
+	annual medians for everything not-vwc
+	once with NH4, once without
+	how will i define domains for camels chem? maybe they have something in metadata i can use
+	saltiness varies more by domain than site. if mcmurdo is included, all the saltiest sites are there. then luquillo, hbef, etc.
+		so took the saltiest site at each domain for pca
 

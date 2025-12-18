@@ -13,6 +13,7 @@ library(ggplot2)
 library(ggthemes)
 library(trend) #for Sen's slope
 library(plotly)
+library(ggrepel)
 ```
 
 ```{r config, include = FALSE}
@@ -21,9 +22,9 @@ library(plotly)
 vwc_vars <- c('pH', 'NO3_N', 'SO4_S', 'Na', 'K', 'Ca', 'Mg', 'SiO2_Si', 'DOC',
               # 'Chla', 'Chl', 'Mn', 'Fe',
               'DIC', 'NH4_N', 'SiO2_S', 'PO4', 'orthophosphate_P',
-              'TSS', 'TP', 'TN', 'F')
+              'TSS', 'TP', 'TN', 'F', 'Cl')
 non_vwc_vars <- c('spCond', 'temp')
-salt_vars <- c('Ca', 'Mg', 'Na', 'K', 'SO4_S', 'NO3_N', 'NH4_N', 'Cl', 'F', 'alk')
+salt_vars <- c('Ca', 'Mg', 'Na', 'K', 'SO4_S', 'NO3_N', 'Cl')#, 'NH4_N', 'F', 'alk')
 np_vars <- c('NO3_N', 'PO4_P')
 # chuck_sites <- c('QT', 'QS', 'Q3')
 chuck_sites <- c()
@@ -56,9 +57,38 @@ conc <- ms_load_product(ms_root, 'stream_chemistry', warn = FALSE)
 # pconc <- ms_load_product(ms_root, 'precip_chemistry')
 q <- ms_load_product(ms_root, 'discharge', warn = FALSE)
 # p <- ms_load_product(ms_root, 'precipitation')
+
+cmls <- read_csv('camels_chem/Camels_chem_1980_2018.csv', guess_max = 40000)
 ```
 
 ```{r prep, include = FALSE}
+
+cmls_sites <- cmls %>% 
+  select(domain = region_name,
+         site_code = gauge_name) %>% 
+  distinct()
+sites <- bind_rows(sites, cmls_sites)
+
+cmls <- cmls %>% 
+  mutate(pH = coalesce(ph, ph2),
+         SO4_S = so4 * (32.06 / 96.06), #SO4 to SO4-S
+         discharge = q_daily * 28.31685) %>% #cfs to L/s
+  select(#domain = region_name,
+         site_code = gauge_name,
+         date = sample_timestamp,
+         Cl = cl, Na = na, K = k, Mg = mg, NO3 = no3, SO4_S, Ca = ca,
+         temp, pH, DO = o, discharge) %>% #alk, etc.
+  mutate(date = as.Date(mdy_hm(date))) %>% 
+  group_by(date, site_code) %>% 
+  summarize(across(everything(), \(x) mean(x, na.rm = TRUE)),
+            .groups = 'drop') %>% 
+  pivot_longer(Cl:discharge, names_to = 'var', values_to = 'val')
+
+q <- bind_rows(q,
+               filter(cmls, var == 'discharge'))
+
+conc <- bind_rows(conc,
+                  filter(cmls, var != 'discharge'))
 
 vwc_s <- conc %>%
   filter(var %in% vwc_vars) %>% 
@@ -94,7 +124,7 @@ d_s <- conc %>%
     wy = if_else(month(date) >= 10, year(date) + 1, year(date)),
   ) %>%
   group_by(domain, site_code, wy, var) %>%
-  summarize(val = mean(val, na.rm = TRUE),
+  summarize(val = median(val, na.rm = TRUE),
             .groups = 'drop') %>% 
   filter(! site_code %in% chuck_sites) %>% 
   group_by(site_code, var) %>% 
@@ -443,8 +473,84 @@ ggplot(d_ratio, aes(wy, ln_np, group = site_code)) +
   theme(legend.position = 'none')
 ```
 
-```{r sulfate PCA}
-vwc_s %>%
-  filter(var %in% salt_vars) %>% 
+### Saltiest sites (per domain) PCA
+
+```{r saltiest site PCA, echo = FALSE, fig.width = 12}
+# saltiest <- d_s %>%
+#   filter(var == 'spCond') %>%
+#   group_by(domain, site_code) %>% 
+#   summarize(spCond = mean(val, na.rm = TRUE),
+#             .groups = 'drop') %>% 
+#   arrange(desc(spCond)) %>% 
+#   filter(spCond >= quantile(spCond, probs = 0.75)) %>% 
+#   pull(site_code)
+d_salt <- vwc_s %>%
+  filter(var %in% salt_vars) %>%
+  filter(all(salt_vars %in% var), .by = c(wy, site_code))
+
+saltiest <- d_salt %>% 
+  group_by(domain, site_code) %>% 
+  # filter(! domain %in% c('luquillo', 'mcmurdo')) %>%
+  summarize(tot_salt = sum(vwc),
+            .groups = 'drop') %>% 
+  group_by(domain) %>%
+  arrange(desc(tot_salt)) %>%
+  slice(2) %>%
+  ungroup() %>%
+  # filter(tot_salt >= quantile(tot_salt, probs = 0.75)) %>%
+  pull(site_code)
   
+d_salt_pca <- d_salt %>%
+  filter(site_code %in% saltiest) %>% 
+  pivot_wider(names_from = var, values_from = vwc) %>% 
+  group_by(domain, site_code) %>% 
+  summarize(across(-wy, mean), .groups = 'drop')
+
+pca_res <- prcomp(select(d_salt_pca, -domain, -site_code), 
+                  scale. = TRUE, center = TRUE)
+scores <- as.data.frame(pca_res$x) %>%
+  bind_cols(d_salt_pca[, c("site_code", "domain")])
+
+loadings <- as.data.frame(pca_res$rotation)
+loadings
+
+
+l_scaled <- loadings %>%
+  mutate(ion = rownames(loadings)) %>%
+  mutate(PC1 = PC1 * 5,
+         PC2 = PC2 * 5)  # scale adjust for loadings
+
+ggplot(scores, aes(PC1, PC2, color = domain)) +
+  geom_point(size = 3) +
+  geom_segment(data = l_scaled,
+               aes(x = 0, y = 0, xend = PC1, yend = PC2),
+               arrow = arrow(length = unit(0.02, "npc")),
+               inherit.aes = FALSE) +
+  geom_text_repel(data = l_scaled,
+                  aes(x = PC1, y = PC2, label = ion),
+                  inherit.aes = FALSE) +
+  theme_minimal()
+
+ggplot(scores, aes(PC1, PC3, color = domain)) +
+  geom_point(size = 3) +
+  geom_segment(data = l_scaled,
+               aes(x = 0, y = 0, xend = PC1, yend = PC3),
+               arrow = arrow(length = unit(0.02, "npc")),
+               inherit.aes = FALSE) +
+  geom_text_repel(data = l_scaled,
+                  aes(x = PC1, y = PC3, label = ion),
+                  inherit.aes = FALSE) +
+  theme_minimal()
+
+ggplot(scores, aes(PC2, PC3, color = domain)) +
+  geom_point(size = 3) +
+  geom_segment(data = l_scaled,
+               aes(x = 0, y = 0, xend = PC2, yend = PC3),
+               arrow = arrow(length = unit(0.02, "npc")),
+               inherit.aes = FALSE) +
+  geom_text_repel(data = l_scaled,
+                  aes(x = PC2, y = PC3, label = ion),
+                  inherit.aes = FALSE) +
+  theme_minimal()
+
 ```
